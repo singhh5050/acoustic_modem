@@ -2,19 +2,23 @@ import numpy as np
 
 # Constants
 SAMPLE_RATE = 44100
-TONE_DURATION = 0.5  # I'm making each tone half a second
+TONE_DURATION = 0.2  # I'm making each tone half a second
 AMPLITUDE = 0.5      # Volume factor, let's keep it modest
 
 # Characters we support!
 CHARSET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,?!"
 BASE_FREQ = 600   # Hz -> where we start the frequency map
-STEP_SIZE = 40    # Hz offset between subsequent chars
+STEP_SIZE = 60    # Hz offset between subsequent chars
 
 # Building a freq map: each char -> freq, freq -> char
 char_to_freq = {char: BASE_FREQ + i * STEP_SIZE for i, char in enumerate(CHARSET)}
 freq_to_char = {v: k for k, v in char_to_freq.items()}
 
-# Tonebank (yay!). Precompute sine waves for each char
+# Preamble tone: a special freq that we don't use in CHARSET
+PREAMBLE_FREQ = 300  # Hz (just pick something outside your char range)
+PREAMBLE_DURATION = 0.3  # short beep to locate start
+
+# Tonebank (easy look up!). Precompute sine waves for each char
 _samples_per_tone = int(SAMPLE_RATE * TONE_DURATION)
 _time = np.linspace(0, TONE_DURATION, _samples_per_tone, endpoint=False)  # time axis for one tone
 tonebank = {
@@ -22,100 +26,90 @@ tonebank = {
     for char, freq in char_to_freq.items()
 }
 
+def generate_preamble():
+    """
+    Create a short sine wave that we'll prepend to every message.
+    We'll look for this in the received audio to sync up.
+    """
+    preamble_samples = int(SAMPLE_RATE * PREAMBLE_DURATION)
+    t = np.linspace(0, PREAMBLE_DURATION, preamble_samples, endpoint=False)
+    return AMPLITUDE * np.sin(2 * np.pi * PREAMBLE_FREQ * t)
+
 def encode_text_to_waveform(text):
     """
-    Takes our text, finds each char's wave from the tonebank,
-    and stitches it all together into one glorious waveform.
-    If there's no recognized char, we skip it. 
+    Attach the preamble tone + the message tones. 
+    That way, the decoder can find the start easily (no big offset search).
     """
-    # Upper-casing to match the keys (since we built everything uppercase)
-    tones = [tonebank[char] for char in text.upper() if char in tonebank]
-    # If no valid tones, return an empty array instead of failing
-    return np.concatenate(tones) if tones else np.zeros_like(_time)
+    # Convert text to a single concatenated waveform of character tones
+    message_tones = [
+        tonebank[char] for char in text.upper() if char in tonebank
+    ]
+    if not message_tones:
+        # If no valid characters, just send silence after preamble
+        return np.concatenate([generate_preamble(), np.zeros_like(_time)])
+    
+    message_wave = np.concatenate(message_tones)
+    # Prepend the preamble wave
+    return np.concatenate([generate_preamble(), message_wave])
 
 def decode_waveform_to_text(waveform, tolerance=20):
     """
-    Attempt to decode the waveform back into text via sliding windows.
-    We look for the offset that yields the smallest average entropy
-    (meaning the signal is super-peaked around one freq per chunk).
-    If we find no good slice, we return an empty string. 
+    Detects the preamble tone to figure out where the message actually starts,
+    then decodes from there assuming perfect alignment.
     """
-
-    def chunk_entropy(chunk):
-        """
-        Convert chunk -> windowed chunk -> FFT -> magnitude array -> probability distribution.
-        Then compute Shannon entropy (base-2), i.e. how "spread out" is the power. 
-        Lower entropy => more concentration in one frequency bin => good news.
-        """
-        windowed = np.hanning(len(chunk)) * chunk  # smooth edges for less spectral leakage
-        fft_vals = np.fft.rfft(windowed)          # real FFT -> freq domain
-        magnitudes = np.abs(fft_vals)             # absolute value -> we only want magnitudes
-
-        total = np.sum(magnitudes)
-        if total == 0:
-            # If chunk is silent, let's just say no entropy here
-            return 0
-
-        # Probability distribution: each freq bin's magnitude is a "prob"
-        p = magnitudes / total
-        # Shannon entropy => sum(p*log2(p)), negative sign
-        return -np.sum(p * np.log2(p + 1e-12))  # tiny offset to avoid log(0)
 
     def detect_freq(chunk):
         """
-        Find the strongest frequency in a chunk by picking the index of
-        the largest magnitude in the FFT result.
+        Find the loudest frequency in this chunk using FFT.
+        The whole point is to figure out which tone was most dominant.
         """
-        windowed = np.hanning(len(chunk)) * chunk
+        windowed = np.hanning(len(chunk)) * chunk 
         fft_vals = np.fft.rfft(windowed)
         freqs = np.fft.rfftfreq(len(chunk), 1 / SAMPLE_RATE)
-        return freqs[np.argmax(np.abs(fft_vals))]  # freq with the biggest amplitude
+        return freqs[np.argmax(np.abs(fft_vals))]
 
     def match_freq_to_char(freq):
         """
-        We look for the closest known freq. If it's within tolerance, we take it;
-        otherwise we call it '�' to indicate we couldn't match. 
+        Map a frequency to the closest known character.
+        If it's too far off, we just call it '�' and move on.
         """
         closest = min(freq_to_char.keys(), key=lambda f: abs(f - freq))
         return freq_to_char[closest] if abs(freq - closest) < tolerance else "�"
 
     def decode_aligned(signal):
         """
-        Decodes a signal under the assumption that it starts exactly at a chunk boundary.
-        If it doesn't, we might get gibberish, which is why we do the sliding window approach
-        to find the correct alignment in the first place.
+        Break the signal into tone-sized chunks, detect the frequency of each,
+        and translate those into characters.
+        Assumes we're starting cleanly at the first character.
         """
         chunks = [
             signal[i : i + _samples_per_tone]
             for i in range(0, len(signal), _samples_per_tone)
-            if np.any(signal[i : i + _samples_per_tone])  # skip all-silent blocks
+            if np.any(signal[i : i + _samples_per_tone])  # skip empty/silent blocks
         ]
         freqs = [detect_freq(c) for c in chunks]
         return ''.join(match_freq_to_char(f) for f in freqs)
 
-    # We'll track the best slice based on minimal average entropy
-    best_slice = None
-    best_average_entropy = float('inf')
+    # === Step 1: Find the preamble ===
+    # This is just a short beep we play before the real message
+    # so the decoder knows where the message starts (like a sync marker).
+    preamble_samples = int(SAMPLE_RATE * PREAMBLE_DURATION)
+    search_limit = min(len(waveform), 5 * SAMPLE_RATE)  # search first few seconds max
+    preamble_found_at = None
+    step = preamble_samples // 2 if preamble_samples // 2 > 0 else 1
 
-    # Slide from offset=0 to offset=_samples_per_tone-1
-    # and see which offset yields the biggest "confidence" (lowest entropy).
-    for offset in range(_samples_per_tone):
-        sliced = waveform[offset:]
-        chunks = [
-            sliced[i : i + _samples_per_tone]
-            for i in range(0, len(sliced) - _samples_per_tone, _samples_per_tone)
-            if np.any(sliced[i : i + _samples_per_tone])
-        ]
-        if not chunks:
-            continue  # If we didn't get any chunks, just ignore this offset
+    for start_idx in range(0, search_limit - preamble_samples, step):
+        chunk = waveform[start_idx : start_idx + preamble_samples]
+        freq_detected = detect_freq(chunk)
+        if abs(freq_detected - PREAMBLE_FREQ) < tolerance:
+            preamble_found_at = start_idx
+            break
 
-        # Compute average chunk entropy for this offset
-        avg_ent = np.mean([chunk_entropy(chunk) for chunk in chunks])
+    if preamble_found_at is None:
+        # didn't hear the preamble — maybe noisy? maybe it never got played?
+        return ""
 
-        # Lower is better => more "peaked" => more obviously one freq
-        if avg_ent < best_average_entropy:
-            best_average_entropy = avg_ent
-            best_slice = sliced
-
-    # If we found a best slice, decode it normally; else return ""
-    return decode_aligned(best_slice) if best_slice is not None else ""
+    # === Step 2: Decode everything after the preamble ===
+    message_start = preamble_found_at + preamble_samples
+    message_signal = waveform[message_start:]
+    return decode_aligned(message_signal)
