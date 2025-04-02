@@ -17,6 +17,21 @@ class ListenerGUI:
         self.title = tk.Label(master, text="🎧 Acoustic Listener", font=("Helvetica", 16))
         self.title.pack(pady=10)
 
+        self.warning_label = tk.Label(
+            master,
+            text=(
+                "⚠️ After clicking 'Start Listening', please wait at least 2 seconds\n"
+                "before playing the sender’s message. This gives your microphone time\n"
+                "to initialize and prevents the preamble from being missed."
+            ),
+            wraplength=420,
+            justify="center",
+            fg="darkred",
+            font=("Helvetica", 11, "bold")
+        )
+        self.warning_label.pack(pady=10)
+    
+
         self.output_label = tk.Label(master, text="Press Start to begin listening.", wraplength=400, justify="center")
         self.output_label.pack(pady=10)
 
