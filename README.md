@@ -3,6 +3,60 @@
 **Overview**  
 This repository contains three Python files – **`protocol.py`**, **`sender.py`**, and **`listener.py`** – that work together to encode text as audio tones, send those tones through speakers, and decode them via a microphone. I designed this as a mini acoustic communication system that demonstrates signal processing, real-time streaming, and a user-friendly GUI.
 
+## Dependencies & Setup
+
+### Required Python Packages
+- **sounddevice**: For audio I/O operations
+- **numpy**: For signal processing and array operations
+- **tkinter**: For GUI interfaces (usually comes with Python)
+
+### Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/yourusername/acoustic_modem.git
+   cd acoustic_modem
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   pip install sounddevice numpy
+   ```
+   Note: If you're using Python 3, you might need to use `pip3` instead of `pip`.
+
+3. **Verify tkinter installation**:
+   ```bash
+   python -c "import tkinter; tkinter._test()"
+   ```
+   This should open a test window. If it fails, you may need to install tkinter:
+   - On Ubuntu/Debian: `sudo apt-get install python3-tk`
+   - On macOS: `brew install python-tk`
+   - On Windows: Usually comes pre-installed with Python
+
+### Usage
+
+1. **Start the Listener**:
+   ```bash
+   python listener.py
+   ```
+   - Select your microphone from the dropdown menu
+   - Click "Start Listening"
+   - The status will show "Listening..." when active
+
+2. **Start the Sender** (in a different terminal):
+   ```bash
+   python sender.py
+   ```
+   - Type your message in the text box
+   - Adjust the amplitude slider if needed (default: 0.5)
+   - Click "Send Message"
+
+3. **Monitor the Results**:
+   - The listener will show partial decodes in real-time
+   - Uncertain characters are marked with "?"
+   - Checksum mismatches are marked with "!"
+   - Complete messages appear in the history
+
 ---
 
 ## Project Requirements
@@ -66,7 +120,7 @@ This repository contains three Python files – **`protocol.py`**, **`sender.py`
     $$H = -\sum_i p_i \log_2(p_i + \epsilon)$$
   
     A clean tone will have a dominant peak (low entropy), while a noisy chunk will exhibit a flatter spectrum (higher entropy).  
-    If a chunk’s distribution is too spread out, we flag that character as **uncertain**.
+    If a chunk's distribution is too spread out, we flag that character as **uncertain**.
 
 4. **FFT + Frequency Matching in Real-Time**  
   Each audio chunk is windowed with a Hanning function and passed through a real FFT to extract its frequency spectrum.  
@@ -85,7 +139,7 @@ This repository contains three Python files – **`protocol.py`**, **`sender.py`
 We pinned `_samples_per_tone` to `0.33s`. Changing it mid-run (e.g., a different setting on the listener) can cause misalignment while chunking.
 
 - **No Auto Parameter Sync**  
-Base frequency, step size, or tone duration changes on the sender require the listener to match. Otherwise, frequencies won’t decode properly. (Hence why there's no option to adjust these parameters in the GUI)
+Base frequency, step size, or tone duration changes on the sender require the listener to match. Otherwise, frequencies won't decode properly. (Hence why there's no option to adjust these parameters in the GUI)
 
 - **Basic Checksum**  
 No advanced error correction is used, just a detection approach. Could add Hamming or Reed-Solomon codes for more robust correction.
