@@ -53,8 +53,6 @@ This repository contains three Python files – **`protocol.py`**, **`sender.py`
 
 3. **Monitor the Results**:
    - The listener will show partial decodes in real-time
-   - Uncertain characters are marked with "?"
-   - Checksum mismatches are marked with "!"
    - Complete messages appear in the history
 
 ---
