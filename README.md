@@ -90,7 +90,7 @@ This repository contains three Python files – **`protocol.py`**, **`sender.py`
   Each character maps to a frequency:  
   The frequency of a character equals the base frequency plus the character's position in our set multiplied by the step size.
 2. **Preamble & Postamble**  
-  A special tone (above or below normal character frequencies) signals the start (preamble) and end (postamble).
+  To mark the start and end of a transmission, we sandwich each message between two special tones: a preamble (2250 Hz sine wave) and a postamble (2500 Hz sine wave). These are distinct from the main character frequencies, which start at 500 Hz and increase in 40 Hz steps. The preamble/postamble sit well above that range to avoid accidental overlap with any valid character tones. Both signals are ~1.5× longer than a typical character tone (which is 0.33 seconds), giving the listener extra time to reliably lock onto the message boundaries — even in slightly noisy environments or on slower microphone setups.
 3. **Checksum for Error Detection**  
   Each message ends with a checksum character computed as:
 
@@ -122,7 +122,9 @@ This repository contains three Python files – **`protocol.py`**, **`sender.py`
     A clean tone will have a dominant peak (low entropy), while a noisy chunk will exhibit a flatter spectrum (higher entropy).  
     If a chunk's distribution is too spread out, we flag that character as **uncertain**.
 
-4. **FFT + Frequency Matching in Real-Time**  
+   ![entropy_levels](https://github.com/user-attachments/assets/df192770-cd82-426f-9225-142289d00dc3)
+
+5. **FFT + Frequency Matching in Real-Time**  
   Each audio chunk is windowed with a Hanning function and passed through a real FFT to extract its frequency spectrum.  
   The peak frequency is then mapped to the closest valid tone in our `CHARSET` frequency map. A configurable `tolerance` threshold ensures we only accept matches that are sufficiently close, which helps filter out noise and harmonics.
   We display partial decodes in the GUI as we go. Once the postamble frequency is detected, we finalize the message, check the checksum, and display the result.
@@ -134,7 +136,9 @@ This repository contains three Python files – **`protocol.py`**, **`sender.py`
 ---
 
 ## Known Limitations & Future Ideas
-
+- **Startup Delay (Mic Warm-Up)**
+When the listener starts, the microphone may take ~2 seconds to fully initialize. If tones begin playing too early, the preamble might be missed and the message won't decode. A brief pause between starting the listener and sending the message helps avoid this.
+  
 - **Fixed Tone Duration**  
 We pinned `_samples_per_tone` to `0.33s`. Changing it mid-run (e.g., a different setting on the listener) can cause misalignment while chunking.
 
